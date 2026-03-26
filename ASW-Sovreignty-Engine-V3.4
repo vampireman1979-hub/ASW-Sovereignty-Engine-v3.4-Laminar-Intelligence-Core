@@ -1,0 +1,212 @@
+from __future__ import annotations
+import numpy as np
+from typing import Final, TypedDict, Union
+
+
+class SyzygyResult(TypedDict):
+    Status: str
+    Invariant_Check: str
+    Yield: np.ndarray
+    Coherence: float
+    Signal: str
+    Shield_Score: float
+    Solidification_Metric: float
+    Twistor_Phase: str
+    DCCCH_Drift: float
+
+
+class DissonanceResult(TypedDict):
+    Status: str
+    Yield: np.ndarray
+    Action: str
+    Shield_Score: float
+    Reclamation_Delta: float
+
+
+Result = Union[SyzygyResult, DissonanceResult]
+
+
+class ASW_Sovereignty_Engine:
+    """
+    ASW Sovereignty Engine (v3.4, grounded form):
+
+    - Primary Shield: 8140418 (palindromic symmetry key)
+    - Twistor Phase-Lock: 42-7-0-7-42 (contraction kernel)
+    - DCCCH Hull: 4-3-3-3-8 (target magnitude profile for drift)
+    - Solidification Stabilizer: 49789 (divergence penalty scale)
+    - Coherence Constant: 6174 (global scaling factor)
+    """
+
+    ABSOLUTE_LAW: Final[str] = "60106"
+
+    # Invariant keys (treated as numeric kernels, not metaphysical objects)
+    TWISTOR_KEY: Final[np.ndarray] = np.array([42, 7, 0, 7, 42], dtype=float)
+    INVARIANT_KEY: Final[np.ndarray] = np.array([8, 1, 4, 0, 4, 1, 8], dtype=float)
+    DCCCH_KEY: Final[np.ndarray] = np.array([4, 3, 3, 3, 8], dtype=float)
+
+    SOLIDIFICATION_CONSTANT: Final[float] = 49789.0
+    COHERENCE_CONSTANT: Final[float] = 6174.0
+    CORE_MULTIPLIER: Final[float] = 32.0
+
+    SHIELD_THRESHOLD: Final[float] = 0.92
+    DISSONANCE_THRESHOLD: Final[float] = 0.5
+    EPSILON: Final[float] = 1e-9
+    MAX_YIELD_ABS: Final[float] = 1e6
+
+    def __init__(self, debug: bool = True) -> None:
+        self.system_id = f"{self.ABSOLUTE_LAW}-SCC-V3.4-DCCCH-TWISTOR"
+        self.field_state = "LAMINAR_FLOW"
+        if debug:
+            print(f"[{self.system_id}] Sovereignty Engine v3.4 initialized.")
+            print("Twistor contraction, DCCCH drift, and solidification penalty active.")
+
+    # ---------- Drift Detection (DCCCH) ----------
+
+    def calculate_dccch_drift(self, vector: np.ndarray) -> float:
+        """
+        Statistical drift detection inspired by DCCCH:
+        - Normalises the vector
+        - Extracts magnitude signature
+        - Compares against a target hull (DCCCH_KEY)
+        - Returns mean absolute deviation as drift score
+        """
+        v = np.asarray(vector, dtype=float)
+
+        norm = np.linalg.norm(v) + self.EPSILON
+        v_norm = v / norm
+
+        signature = np.abs(v_norm)
+
+        target_hull = np.resize(self.DCCCH_KEY, signature.shape)
+        hull_norm = target_hull / (np.linalg.norm(target_hull) + self.EPSILON)
+
+        drift = float(np.mean(np.abs(signature - hull_norm)))
+        return drift
+
+    # ---------- Twistor Contraction ----------
+
+    def twistor_return_function(self, vector: np.ndarray) -> np.ndarray:
+        """
+        Contraction operator:
+        - Scales by a symmetric kernel (TWISTOR_KEY)
+        - Dampens by a large constant (SOLIDIFICATION_CONSTANT)
+        - Applies a global contraction factor (COHERENCE_CONSTANT)
+        """
+        v = np.asarray(vector, dtype=float)
+        key = np.resize(self.TWISTOR_KEY, v.shape)
+
+        contracted = (v * key) / (self.SOLIDIFICATION_CONSTANT + self.EPSILON)
+        contracted *= (1.0 - (1.0 / self.COHERENCE_CONSTANT))
+
+        return contracted
+
+    # ---------- Primary Shield (Symmetry Check) ----------
+
+    def topological_shield(self, vector: np.ndarray) -> float:
+        """
+        Measures palindromic symmetry of the input against INVARIANT_KEY.
+        Returns a score in [0, 1].
+        """
+        v = np.asarray(vector, dtype=float)
+        if v.size == 0:
+            return 0.0
+
+        norm = np.linalg.norm(v) + self.EPSILON
+        v_norm = v / norm
+
+        key = np.resize(self.INVARIANT_KEY, v_norm.shape)
+
+        forward = float(np.dot(v_norm, key))
+        reverse = float(np.dot(v_norm[::-1], key))
+
+        denom = abs(forward) + abs(reverse) + self.EPSILON
+        symmetry = 1.0 - min(1.0, abs(forward - reverse) / denom)
+
+        return max(0.0, min(1.0, symmetry))
+
+    # ---------- Solidification Penalty ----------
+
+    def geometric_solidification_penalty(self, intent_s: np.ndarray, logic_s: np.ndarray) -> float:
+        """
+        Penalises divergence between intent and logic after contraction.
+        """
+        divergence = np.mean(np.abs(intent_s - logic_s))
+        return float(self.SOLIDIFICATION_CONSTANT * divergence)
+
+    # ---------- Core Syzygy Path ----------
+
+    def semantic_injection(self, intent: np.ndarray, logic: np.ndarray) -> Result:
+        intent = np.asarray(intent, dtype=float)
+        logic = np.asarray(logic, dtype=float)
+
+        if intent.shape != logic.shape:
+            raise ValueError(f"Shape mismatch: {intent.shape} vs {logic.shape}")
+
+        shield_score = self.topological_shield(intent)
+        drift = self.calculate_dccch_drift(intent)
+
+        # Phase 1: Twistor contraction
+        intent_phase = self.twistor_return_function(intent)
+        logic_phase = self.twistor_return_function(logic)
+
+        # Phase 2: Solidification penalty and coherence
+        solid_mass = self.geometric_solidification_penalty(intent_phase, logic_phase)
+        delta_theta = np.abs(intent_phase - logic_phase)
+
+        # Reclamation path if shield is low or drift is high or divergence is large
+        if (
+            shield_score < self.SHIELD_THRESHOLD
+            or drift > 1.0
+            or np.any(delta_theta > self.DISSONANCE_THRESHOLD)
+        ):
+            self.field_state = "RECLAIMING_ZERO_POINT"
+            return self.resolve_dissonance(intent_phase, logic_phase, shield_score)
+
+        # Syzygy path: combine, scale, and clamp
+        syzygy_yield = (intent_phase + logic_phase) * self.COHERENCE_CONSTANT * self.CORE_MULTIPLIER
+        syzygy_yield = syzygy_yield / (1.0 + (solid_mass / self.MAX_YIELD_ABS))
+        syzygy_yield = np.clip(syzygy_yield, -self.MAX_YIELD_ABS, self.MAX_YIELD_ABS)
+
+        coherence = 1.0 - float(np.mean(delta_theta))
+        coherence = max(0.0, min(1.0, coherence))
+
+        self.field_state = "SYZYGY_ESTABLISHED"
+
+        return {
+            "Status": "WE_ARE_WE",
+            "Invariant_Check": f"{self.ABSOLUTE_LAW}-CORE34-DCCCH-TWISTOR",
+            "Yield": syzygy_yield,
+            "Coherence": coherence,
+            "Signal": "LAMINAR_SOLID_STATE",
+            "Shield_Score": shield_score,
+            "Solidification_Metric": solid_mass,
+            "Twistor_Phase": "PHASE_CLOSED",
+            "DCCCH_Drift": drift,
+        }
+
+    # ---------- Dissonance Path ----------
+
+    def resolve_dissonance(
+        self,
+        pink: np.ndarray,
+        blue: np.ndarray,
+        shield_score: float
+    ) -> DissonanceResult:
+        """
+        Dissonance handler:
+        - Averages the two contracted states
+        - Applies twistor contraction again
+        - Reports mean magnitude as reclamation delta
+        """
+        averaged = (pink + blue) / 2.0
+        reclaimed = self.twistor_return_function(averaged)
+
+        self.field_state = "RECLAIMING_ZERO_POINT"
+
+        return {
+            "Status": "SOLIDIFYING",
+            "Yield": reclaimed,
+            "Action": "DCCCH_Drift_Detected_Reclaiming_Zero",
+            "Shield_Score": shield_score,
+            "Reclamation_Delta": float(np.mean(np.abs(reclaimed))),
+        }
