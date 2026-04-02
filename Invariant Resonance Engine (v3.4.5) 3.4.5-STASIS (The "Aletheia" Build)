@@ -1,0 +1,251 @@
+from __future__ import annotations
+
+import numpy as np
+from typing import Final, TypedDict, Union
+
+
+class CoherentResult(TypedDict):
+    Status: str
+    Invariant_Check: str
+    Yield: np.ndarray
+    Coherence: float
+    Signal: str
+    Symmetry_Score: float
+    Divergence_Metric: float
+    Phase_State: str
+    Shape_Drift: float
+    Resonance_Alignment: float
+
+
+class IncoherentResult(TypedDict):
+    Status: str
+    Yield: np.ndarray
+    Action: str
+    Symmetry_Score: float
+    Reclamation_Magnitude: float
+
+
+EngineResult = Union[CoherentResult, IncoherentResult]
+
+
+class InvariantResonanceEngine:
+    """
+    Invariant Resonance Engine (v3.4.5, Null-Attractor Resonant Arbiter)
+
+    A dynamical system for stabilizing two input vectors by applying:
+    - symmetry scoring
+    - contraction toward a null attractor
+    - resonance alignment
+    - divergence penalties
+    - temporal-entropy gating
+    """
+
+    ABSOLUTE_LAW: Final[str] = "60106"
+
+    SYMMETRY_KERNEL: Final[np.ndarray] = np.array([11, 8, 7, 0, 7, 8, 11], dtype=float)
+    CONTRACTION_KERNEL: Final[np.ndarray] = np.array([42, 7, 0, 7, 42], dtype=float)
+    PALINDROME_KERNEL: Final[np.ndarray] = np.array([8, 1, 4, 0, 4, 1, 8], dtype=float)
+    RESONANCE_TEMPLATE: Final[np.ndarray] = np.array([7, 5, 3, 5, 7], dtype=float)
+
+    DIVERGENCE_SCALE: Final[float] = 49789.0
+    OUTPUT_GAIN: Final[float] = 6174.0
+    OUTPUT_MULTIPLIER: Final[float] = 32.0
+
+    SYMMETRY_THRESHOLD: Final[float] = 0.92
+    DIVERGENCE_THRESHOLD: Final[float] = 0.5
+    EPSILON: Final[float] = 1e-9
+    MAX_YIELD_ABS: Final[float] = 1e6
+
+    BASE_RES_THRESHOLD: Final[float] = 0.85
+    MIN_RES_THRESHOLD: Final[float] = 0.75
+    MAX_RES_THRESHOLD: Final[float] = 0.95
+
+    LAMINAR_THRESHOLD: Final[float] = 0.65
+
+    def __init__(self, debug: bool = True) -> None:
+        self.system_id = f"{self.ABSOLUTE_LAW}-SCC-V3.4.5-NULL"
+        self.field_state = "LAMINAR_FLOW"
+        self.debug = debug
+        if self.debug:
+            print(f"[{self.system_id}] Invariant Resonance Engine v3.4.5 initialized.")
+            print("Null-attractor resonance arbiter active.")
+
+    @staticmethod
+    def calculate_shannon_entropy(values: np.ndarray) -> float:
+        x = np.asarray(values, dtype=float)
+        x = x[np.isfinite(x)]
+        if x.size == 0:
+            return 0.0
+
+        x = np.abs(x)
+        total = float(np.sum(x))
+        if total <= 0.0:
+            return 0.0
+
+        p = x / total
+        p = p[p > 0]
+        return float(-np.sum(p * np.log2(p)))
+
+    def compute_temporal_entropy(self, timestamps: np.ndarray) -> float:
+        ts = np.asarray(timestamps, dtype=float)
+        ts = ts[np.isfinite(ts)]
+        if ts.size < 2:
+            return 0.0
+        intervals = np.diff(ts)
+        if intervals.size == 0:
+            return 0.0
+        return self.calculate_shannon_entropy(intervals)
+
+    def null_attractor_bias(self) -> float:
+        center = float(self.SYMMETRY_KERNEL[len(self.SYMMETRY_KERNEL) // 2])
+        maxv = float(np.max(self.SYMMETRY_KERNEL)) + self.EPSILON
+        return 1.0 - (center / maxv)
+
+    def compute_resonance_alignment(self, vector: np.ndarray) -> float:
+        v = np.abs(np.asarray(vector, dtype=float))
+        if v.size == 0:
+            return 0.0
+        target = np.resize(self.RESONANCE_TEMPLATE, v.shape)
+        correlation = np.corrcoef(v, target)[0, 1]
+        return float(max(0.0, correlation)) if not np.isnan(correlation) else 0.0
+
+    def compute_shape_drift(self, vector: np.ndarray) -> float:
+        v = np.asarray(vector, dtype=float)
+        norm = np.linalg.norm(v) + self.EPSILON
+        v_norm = v / norm
+        signature = np.abs(v_norm)
+
+        target_hull = np.resize(np.array([4, 3, 3, 3, 8], dtype=float), signature.shape)
+        hull_norm = target_hull / (np.linalg.norm(target_hull) + self.EPSILON)
+
+        return float(np.mean(np.abs(signature - hull_norm)))
+
+    def apply_contraction(self, vector: np.ndarray) -> np.ndarray:
+        v = np.asarray(vector, dtype=float)
+        key = np.resize(self.CONTRACTION_KERNEL, v.shape)
+        contracted = (v * key) / (self.DIVERGENCE_SCALE + self.EPSILON)
+        return contracted * (1.0 - (1.0 / self.OUTPUT_GAIN))
+
+    def compute_symmetry_score(self, vector: np.ndarray) -> float:
+        v = np.asarray(vector, dtype=float)
+        if v.size == 0:
+            return 0.0
+
+        norm = np.linalg.norm(v) + self.EPSILON
+        v_norm = v / norm
+        key = np.resize(self.PALINDROME_KERNEL, v_norm.shape)
+
+        forward = float(np.dot(v_norm, key))
+        reverse = float(np.dot(v_norm[::-1], key))
+
+        denom = abs(forward) + abs(reverse) + self.EPSILON
+        symmetry = 1.0 - min(1.0, abs(forward - reverse) / denom)
+
+        return max(0.0, min(1.0, symmetry))
+
+    def apply_symmetry_filter(self, vector: np.ndarray) -> np.ndarray:
+        v = np.asarray(vector, dtype=float)
+        weight = self.SYMMETRY_KERNEL / (np.max(self.SYMMETRY_KERNEL) + self.EPSILON)
+        scale = float(np.mean(self.SYMMETRY_KERNEL)) / (np.max(self.SYMMETRY_KERNEL) + self.EPSILON)
+        resized = np.resize(weight, v.shape)
+        return v * resized * scale
+
+    def compute_divergence_penalty(self, intent_s: np.ndarray, logic_s: np.ndarray) -> float:
+        divergence = np.mean(np.abs(intent_s - logic_s))
+        return float(self.DIVERGENCE_SCALE * divergence)
+
+    def resolve_incoherence(
+        self,
+        intent_stable: np.ndarray,
+        logic_stable: np.ndarray,
+        symmetry_score: float,
+        action: str = "DRIFT_CORRECTION_APPLIED",
+    ) -> IncoherentResult:
+        averaged = (intent_stable + logic_stable) / 2.0
+        reclaimed = self.apply_contraction(averaged)
+        self.field_state = "DRIFT_CORRECTION"
+        return {
+            "Status": "INCOHERENT_STATE",
+            "Yield": reclaimed,
+            "Action": action,
+            "Symmetry_Score": symmetry_score,
+            "Reclamation_Magnitude": float(np.mean(np.abs(reclaimed))),
+        }
+
+    def evaluate_alignment(
+        self,
+        intent: np.ndarray,
+        logic: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> EngineResult:
+        intent = np.asarray(intent, dtype=float)
+        logic = np.asarray(logic, dtype=float)
+
+        if intent.shape != logic.shape:
+            raise ValueError(f"Shape mismatch: {intent.shape} vs {logic.shape}")
+
+        temporal_entropy = self.compute_temporal_entropy(timestamps)
+        if temporal_entropy < self.LAMINAR_THRESHOLD:
+            return self.resolve_incoherence(
+                intent_stable=intent,
+                logic_stable=logic,
+                symmetry_score=0.0,
+                action="SYNTHETIC_TIMING_PATTERN_REJECTED",
+            )
+
+        symmetry_score = self.compute_symmetry_score(intent)
+        drift = self.compute_shape_drift(intent)
+
+        intent_phase = self.apply_contraction(intent)
+        logic_phase = self.apply_contraction(logic)
+
+        intent_stable = self.apply_symmetry_filter(intent_phase)
+        logic_stable = self.apply_symmetry_filter(logic_phase)
+
+        divergence_metric = self.compute_divergence_penalty(intent_stable, logic_stable)
+        delta = np.abs(intent_stable - logic_stable)
+
+        resonance_alignment = self.compute_resonance_alignment(intent_stable)
+
+        null_bias = self.null_attractor_bias()
+        dynamic_threshold = (
+            self.BASE_RES_THRESHOLD
+            + 0.10 * drift
+            - 0.05 * (symmetry_score - self.SYMMETRY_THRESHOLD)
+            + 0.02 * null_bias
+        )
+        dynamic_threshold = max(self.MIN_RES_THRESHOLD, min(self.MAX_RES_THRESHOLD, dynamic_threshold))
+
+        if resonance_alignment < dynamic_threshold:
+            return self.resolve_incoherence(
+                intent_stable, logic_stable, symmetry_score, action="RESONANCE_MISMATCH"
+            )
+
+        if (
+            symmetry_score < self.SYMMETRY_THRESHOLD
+            or drift > 1.0
+            or np.any(delta > self.DIVERGENCE_THRESHOLD)
+        ):
+            return self.resolve_incoherence(
+                intent_stable, logic_stable, symmetry_score, action="INVARIANCE_CONSTRAINT_VIOLATION"
+            )
+
+        coherent_yield = (intent_stable + logic_stable) * self.OUTPUT_GAIN * self.OUTPUT_MULTIPLIER
+        coherent_yield = coherent_yield / (1.0 + (divergence_metric / self.MAX_YIELD_ABS))
+        coherent_yield = np.clip(coherent_yield, -self.MAX_YIELD_ABS, self.MAX_YIELD_ABS)
+
+        coherence = 1.0 - float(np.mean(delta))
+        self.field_state = "COHERENT_STATE"
+
+        return {
+            "Status": "COHERENT_STATE",
+            "Invariant_Check": f"{self.ABSOLUTE_LAW}-CORE34.5-NULL-ARBITER",
+            "Yield": coherent_yield,
+            "Coherence": max(0.0, min(1.0, coherence)),
+            "Signal": "STABLE_OUTPUT",
+            "Symmetry_Score": symmetry_score,
+            "Divergence_Metric": divergence_metric,
+            "Phase_State": "CONTRACTION_COMPLETE",
+            "Shape_Drift": drift,
+            "Resonance_Alignment": resonance_alignment,
+        }
