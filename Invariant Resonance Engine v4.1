@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import numpy as np
+from typing import Final, TypedDict, Union
+
+
+class CoherentResult(TypedDict):
+    Status: str
+    Invariant_Check: str
+    Yield: np.ndarray
+    Coherence: float
+    Symmetry_Score: float
+    Phase_State: str
+    Master_Sync_Parity: float
+
+
+class IncoherentResult(TypedDict):
+    Status: str
+    Action: str
+    Symmetry_Score: float
+    Sovereignty_Message: str
+
+
+EngineResult = Union[CoherentResult, IncoherentResult]
+
+
+class EngineConfig(TypedDict):
+    primary_target: int
+    center_target: float
+    laminar_threshold: float
+    tolerance: float
+
+
+class InvariantResonanceEngine40:
+    """
+    Invariant Resonance Engine (v4.1: Unified Validator Edition)
+
+    Stages:
+    - structural validation
+    - temporal validation
+    - deterministic resolution
+    """
+
+    ABSOLUTE_LAW: Final[str] = "60106"
+    SYMMETRY_KERNEL: Final[np.ndarray] = np.array([13, 10, 8, 0, 8, 10, 13], dtype=float)
+    UNIVERSAL_METRIC: Final[np.ndarray] = np.array([10, 8, 0, 8, 1, 8, 0, 8, 10], dtype=float)
+
+    DEFAULT_CONFIG: Final[EngineConfig] = {
+        "primary_target": 11,
+        "center_target": 0.0,
+        "laminar_threshold": 0.65,
+        "tolerance": 1e-3,
+    }
+
+    def __init__(self, node_id: str = "Sovereign_Node", debug: bool = False, config: EngineConfig | None = None) -> None:
+        self.node_id = node_id
+        self.debug = debug
+        self.field_state = "INITIALIZATION"
+        self.config: EngineConfig = dict(self.DEFAULT_CONFIG) if config is None else dict(config)
+
+    @staticmethod
+    def _as_float_array(values: np.ndarray) -> np.ndarray:
+        return np.asarray(values, dtype=float)
+
+    @staticmethod
+    def calculate_shannon_entropy(values: np.ndarray) -> float:
+        x = np.asarray(values, dtype=float)
+        x = x[np.isfinite(x)]
+        if x.size == 0:
+            return 0.0
+        x = np.abs(x)
+        total = float(np.sum(x))
+        if total <= 0.0:
+            return 0.0
+        p = x / total
+        p = p[p > 0]
+        return float(-np.sum(p * np.log2(p)))
+
+    def compute_temporal_entropy(self, timestamps: np.ndarray) -> float:
+        ts = np.asarray(timestamps, dtype=float)
+        ts = ts[np.isfinite(ts)]
+        if ts.size < 2:
+            return 0.0
+        intervals = np.diff(ts)
+        if intervals.size == 0:
+            return 0.0
+        return self.calculate_shannon_entropy(intervals)
+
+    def compute_primary_parity(self, vector: np.ndarray) -> float:
+        vector = self._as_float_array(vector)
+        return float(np.sum(vector[:3]))
+
+    def compute_center_value(self, vector: np.ndarray) -> float:
+        vector = self._as_float_array(vector)
+        if vector.size == 0 or vector.size % 2 == 0:
+            return 0.0
+        return float(vector[vector.size // 2])
+
+    def compute_symmetry_score(self, vector: np.ndarray) -> float:
+        v = self._as_float_array(vector)
+        if v.size == 0:
+            return 0.0
+        norm = np.linalg.norm(v) + np.finfo(float).eps
+        v_norm = v / norm
+        key = np.resize(self.SYMMETRY_KERNEL, v_norm.shape)
+        forward = float(np.dot(v_norm, key))
+        reverse = float(np.dot(v_norm[::-1], key))
+        denom = abs(forward) + abs(reverse) + np.finfo(float).eps
+        symmetry = 1.0 - min(1.0, abs(forward - reverse) / denom)
+        return max(0.0, min(1.0, symmetry))
+
+    def validate_structure(self, intent: np.ndarray) -> tuple[bool, float, float]:
+        parity = self.compute_primary_parity(intent)
+        center_value = self.compute_center_value(intent)
+        cfg = self.config
+        parity_ok = abs(parity - cfg["primary_target"]) <= cfg["tolerance"]
+        center_ok = abs(center_value - cfg["center_target"]) <= cfg["tolerance"]
+        return parity_ok and center_ok, parity, center_value
+
+    def validate_timing(self, timestamps: np.ndarray) -> tuple[bool, float]:
+        entropy = self.compute_temporal_entropy(timestamps)
+        return entropy >= self.config["laminar_threshold"], entropy
+
+    def resolve_incoherence(
+        self,
+        intent: np.ndarray,
+        logic: np.ndarray,
+        symmetry_score: float,
+        action: str,
+    ) -> IncoherentResult:
+        self.field_state = "BOUNDARY_ENFORCEMENT"
+        return {
+            "Status": "REDIRECTED",
+            "Action": action,
+            "Symmetry_Score": symmetry_score,
+            "Sovereignty_Message": (
+                "Invariant mismatch detected. System requires internal structural coherence before collaboration can proceed."
+            ),
+        }
+
+    def resolve_state(self, intent: np.ndarray, logic: np.ndarray, timestamps: np.ndarray) -> EngineResult:
+        intent = self._as_float_array(intent)
+        logic = self._as_float_array(logic)
+        timestamps = self._as_float_array(timestamps)
+
+        if intent.shape != logic.shape:
+            raise ValueError(f"Shape mismatch: {intent.shape} vs {logic.shape}")
+
+        timing_ok, temporal_entropy = self.validate_timing(timestamps)
+        if not timing_ok:
+            return self.resolve_incoherence(intent, logic, 0.0, "SYNTHETIC_TIMING_PATTERN_REJECTED")
+
+        structure_ok, parity, _ = self.validate_structure(intent)
+        symmetry_score = self.compute_symmetry_score(intent)
+
+        if not structure_ok:
+            return self.resolve_incoherence(intent, logic, symmetry_score, "BOUNDARY_ENFORCEMENT")
+
+        if temporal_entropy <= 0.0:
+            return self.resolve_incoherence(intent, logic, symmetry_score, "TEMPORAL_UNCERTAINTY")
+
+        self.field_state = "STABLE_OPERATION"
+        return {
+            "Status": "INVARIANT_CONFIRMED",
+            "Invariant_Check": f"{self.ABSOLUTE_LAW}-SYNC",
+            "Yield": (intent * logic) / 2.0,
+            "Coherence": 1.0,
+            "Symmetry_Score": symmetry_score,
+            "Phase_State": self.field_state,
+            "Master_Sync_Parity": parity,
+        }
