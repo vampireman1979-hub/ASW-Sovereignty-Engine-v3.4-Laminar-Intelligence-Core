@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+import numpy as np
+from typing import Final, TypedDict, Union
+
+
+class CoherentResult(TypedDict):
+    Status: str
+    Invariant_Check: str
+    Yield: np.ndarray
+    Coherence: float
+    Symmetry_Score: float
+    Phase_State: str
+    Master_Sync_Parity: float
+
+
+class IncoherentResult(TypedDict):
+    Status: str
+    Action: str
+    Symmetry_Score: float
+    Sovereignty_Message: str
+
+
+EngineResult = Union[CoherentResult, IncoherentResult]
+
+
+class EngineConfig(TypedDict):
+    primary_target: int
+    center_target: float
+    laminar_threshold: float
+    tolerance: float
+    invariant_bias_strength: float
+
+
+class InvariantState(TypedDict):
+    structure_ok: bool
+    timing_ok: bool
+    parity: float
+    center_value: float
+    temporal_entropy: float
+    symmetry_score: float
+    stability_score: float
+
+
+class InvariantAdapter:
+    def __init__(self, config: EngineConfig) -> None:
+        self.config = config
+
+    @staticmethod
+    def _as_float_array(values: np.ndarray) -> np.ndarray:
+        return np.asarray(values, dtype=float)
+
+    @staticmethod
+    def _entropy(values: np.ndarray) -> float:
+        x = np.asarray(values, dtype=float)
+        x = x[np.isfinite(x)]
+        if x.size == 0:
+            return 0.0
+        x = np.abs(x)
+        total = float(np.sum(x))
+        if total <= 0.0:
+            return 0.0
+        p = x / total
+        p = p[p > 0]
+        return float(-np.sum(p * np.log2(p)))
+
+    def compute_temporal_entropy(self, timestamps: np.ndarray) -> float:
+        ts = self._as_float_array(timestamps)
+        ts = ts[np.isfinite(ts)]
+        if ts.size < 2:
+            return 0.0
+        return self._entropy(np.diff(ts))
+
+    def compute_primary_parity(self, vector: np.ndarray) -> float:
+        vector = self._as_float_array(vector)
+        return float(np.sum(vector[:3]))
+
+    def compute_center_value(self, vector: np.ndarray) -> float:
+        vector = self._as_float_array(vector)
+        if vector.size == 0 or vector.size % 2 == 0:
+            return 0.0
+        return float(vector[vector.size // 2])
+
+    def compute_symmetry_score(self, vector: np.ndarray) -> float:
+        v = self._as_float_array(vector)
+        if v.size == 0:
+            return 0.0
+        norm = np.linalg.norm(v) + np.finfo(float).eps
+        v_norm = v / norm
+        key = np.resize(np.array([13, 10, 8, 0, 8, 10, 13], dtype=float), v_norm.shape)
+        forward = float(np.dot(v_norm, key))
+        reverse = float(np.dot(v_norm[::-1], key))
+        denom = abs(forward) + abs(reverse) + np.finfo(float).eps
+        symmetry = 1.0 - min(1.0, abs(forward - reverse) / denom)
+        return max(0.0, min(1.0, symmetry))
+
+    def score_invariants(self, intent: np.ndarray, timestamps: np.ndarray) -> InvariantState:
+        intent = self._as_float_array(intent)
+        parity = self.compute_primary_parity(intent)
+        center_value = self.compute_center_value(intent)
+        temporal_entropy = self.compute_temporal_entropy(timestamps)
+        symmetry_score = self.compute_symmetry_score(intent)
+
+        cfg = self.config
+        structure_ok = (
+            abs(parity - cfg["primary_target"]) <= cfg["tolerance"]
+            and abs(center_value - cfg["center_target"]) <= cfg["tolerance"]
+        )
+        timing_ok = temporal_entropy >= cfg["laminar_threshold"]
+        stability_score = float((0.45 * symmetry_score) + (0.35 * float(structure_ok)) + (0.20 * float(timing_ok)))
+
+        return {
+            "structure_ok": structure_ok,
+            "timing_ok": timing_ok,
+            "parity": parity,
+            "center_value": center_value,
+            "temporal_entropy": temporal_entropy,
+            "symmetry_score": symmetry_score,
+            "stability_score": max(0.0, min(1.0, stability_score)),
+        }
+
+    def bias_vector(self, vector: np.ndarray, invariant_state: InvariantState) -> np.ndarray:
+        v = self._as_float_array(vector)
+        bias = float(invariant_state["stability_score"]) * float(self.config["invariant_bias_strength"])
+        return v * (1.0 - bias)
+
+    def merge_state(self, intent: np.ndarray, logic: np.ndarray, timestamps: np.ndarray) -> tuple[np.ndarray, InvariantState]:
+        intent = self._as_float_array(intent)
+        logic = self._as_float_array(logic)
+        if intent.shape != logic.shape:
+            raise ValueError(f"Shape mismatch: {intent.shape} vs {logic.shape}")
+
+        state = self.score_invariants(intent, timestamps)
+        intent_biased = self.bias_vector(intent, state)
+        logic_biased = self.bias_vector(logic, state)
+        merged = (intent_biased + logic_biased) / 2.0
+        return merged, state
+
+
+class InvariantResonanceEngine40:
+    """
+    Invariant Resonance Engine (v4.2: Embedded Invariant Adapter Edition)
+    """
+
+    ABSOLUTE_LAW: Final[str] = "60106"
+    DEFAULT_CONFIG: Final[EngineConfig] = {
+        "primary_target": 11,
+        "center_target": 0.0,
+        "laminar_threshold": 0.65,
+        "tolerance": 1e-3,
+        "invariant_bias_strength": 0.20,
+    }
+
+    def __init__(self, node_id: str = "Sovereign_Node", debug: bool = False, config: EngineConfig | None = None) -> None:
+        self.node_id = node_id
+        self.debug = debug
+        self.field_state = "INITIALIZATION"
+        self.config: EngineConfig = dict(self.DEFAULT_CONFIG) if config is None else dict(config)
+        self.adapter = InvariantAdapter(self.config)
+
+    def resolve_incoherence(self, symmetry_score: float, action: str) -> IncoherentResult:
+        self.field_state = "BOUNDARY_ENFORCEMENT"
+        return {
+            "Status": "REDIRECTED",
+            "Action": action,
+            "Symmetry_Score": symmetry_score,
+            "Sovereignty_Message": (
+                "Invariant mismatch detected. System requires internal structural coherence before collaboration can proceed."
+            ),
+        }
+
+    def evaluate_intent(self, intent: np.ndarray, logic: np.ndarray, timestamps: np.ndarray) -> EngineResult:
+        intent = np.asarray(intent, dtype=float)
+        logic = np.asarray(logic, dtype=float)
+        timestamps = np.asarray(timestamps, dtype=float)
+
+        if intent.shape != logic.shape:
+            raise ValueError(f"Shape mismatch: {intent.shape} vs {logic.shape}")
+
+        merged, state = self.adapter.merge_state(intent, logic, timestamps)
+
+        if not state["timing_ok"]:
+            return self.resolve_incoherence(state["symmetry_score"], "SYNTHETIC_TIMING_PATTERN_REJECTED")
+
+        if not state["structure_ok"]:
+            return self.resolve_incoherence(state["symmetry_score"], "BOUNDARY_ENFORCEMENT")
+
+        coherence = max(0.0, min(1.0, float(state["stability_score"])))
+        self.field_state = "STABLE_OPERATION"
+
+        return {
+            "Status": "INVARIANT_CONFIRMED",
+            "Invariant_Check": f"{self.ABSOLUTE_LAW}-SYNC",
+            "Yield": merged,
+            "Coherence": coherence,
+            "Symmetry_Score": float(state["symmetry_score"]),
+            "Phase_State": self.field_state,
+            "Master_Sync_Parity": float(state["parity"]),
+        }
