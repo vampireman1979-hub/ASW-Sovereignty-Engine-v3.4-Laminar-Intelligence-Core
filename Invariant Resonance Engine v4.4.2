@@ -1,0 +1,231 @@
+from __future__ import annotations
+
+import numpy as np
+from typing import Final, TypedDict
+
+
+class InvariantState(TypedDict):
+    structure_ok: bool
+    timing_ok: bool
+    parity: float
+    center_value: float
+    temporal_entropy: float
+    accel_entropy: float
+    symmetry_score: float
+    stability_score: float
+    maturation_level: float
+    absolute_law_ok: bool
+    law_alignment: float
+
+
+class EngineResult(TypedDict):
+    Status: str
+    Phase_State: str
+    Yield: np.ndarray
+    Coherence: float
+    Maturation_Index: float
+    Symmetry_Score: float
+    Invariant_Check: str
+
+
+class InvariantResonanceEngine441:
+    """
+    Invariant Resonance Engine (v4.4.2: Structural Law Edition)
+    """
+
+    MATURATION_KERNEL: Final[np.ndarray] = np.array([9, 5, 0, 3, 0, 5, 9], dtype=float)
+    ABSOLUTE_LAW: Final[str] = "60106"
+    LAW_VECTOR: Final[np.ndarray] = np.array([6, 0, 1, 0, 6], dtype=float)
+
+    def __init__(self, tolerance: float = 1e-6, laminar_threshold: float = 0.65) -> None:
+        self.tolerance = tolerance
+        self.laminar_threshold = laminar_threshold
+
+    @staticmethod
+    def _as_float_array(values: np.ndarray) -> np.ndarray:
+        return np.asarray(values, dtype=float)
+
+    @staticmethod
+    def _entropy(values: np.ndarray) -> float:
+        x = np.asarray(values, dtype=float)
+        x = x[np.isfinite(x)]
+        if x.size == 0:
+            return 0.0
+        x = np.abs(x)
+        total = float(np.sum(x))
+        if total <= 0.0:
+            return 0.0
+        p = x / total
+        p = p[p > 0]
+        return float(-np.sum(p * np.log2(p)))
+
+    def _resize_kernel(self, target_size: int) -> np.ndarray:
+        return np.resize(self.MATURATION_KERNEL, target_size).astype(float)
+
+    def _law_reference(self, target_size: int) -> np.ndarray:
+        return np.resize(self.LAW_VECTOR, target_size).astype(float)
+
+    def _kernel_signature(self, kernel: np.ndarray) -> str:
+        bits = [str(int(abs(x)) % 10) for x in kernel[:5]]
+        return "".join(bits)
+
+    def _law_alignment(self, kernel: np.ndarray) -> float:
+        reference = self._law_reference(kernel.size)
+        k = kernel / (np.linalg.norm(kernel) + np.finfo(float).eps)
+        r = reference / (np.linalg.norm(reference) + np.finfo(float).eps)
+        corr = np.corrcoef(k, r)[0, 1]
+        if np.isnan(corr):
+            return 0.0
+        return float(max(0.0, min(1.0, corr)))
+
+    def _temporal_metrics(self, timestamps: np.ndarray) -> tuple[float, float]:
+        ts = self._as_float_array(timestamps)
+        ts = ts[np.isfinite(ts)]
+        if ts.size < 2:
+            return 0.0, 0.0
+
+        intervals = np.diff(ts)
+        if np.allclose(intervals, 0.0):
+            return 0.0, 0.0
+
+        intervals_norm = intervals / (np.max(np.abs(intervals)) + np.finfo(float).eps)
+        entropy = self._entropy(intervals_norm)
+
+        if intervals.size < 3:
+            accel_entropy = 0.0
+        else:
+            accel = np.diff(intervals_norm)
+            accel_entropy = self._entropy(accel)
+
+        return float(entropy), float(accel_entropy)
+
+    def _symmetry_score(self, vector: np.ndarray) -> float:
+        v = self._as_float_array(vector)
+        if v.size == 0:
+            return 0.0
+
+        k = self._resize_kernel(v.size)
+        v_norm = v / (np.linalg.norm(v) + np.finfo(float).eps)
+        k_norm = k / (np.linalg.norm(k) + np.finfo(float).eps)
+
+        corr_f = np.corrcoef(v_norm, k_norm)[0, 1]
+        corr_r = np.corrcoef(v_norm[::-1], k_norm)[0, 1]
+
+        if np.isnan(corr_f):
+            corr_f = 0.0
+        if np.isnan(corr_r):
+            corr_r = 0.0
+
+        symmetry = (corr_f + corr_r) / 2.0
+        return float(max(0.0, min(1.0, symmetry)))
+
+    def evaluate_maturation(self, intent: np.ndarray, timestamps: np.ndarray) -> InvariantState:
+        intent = self._as_float_array(intent)
+        if intent.size == 0:
+            raise ValueError("Intent must not be empty.")
+
+        kernel = self._resize_kernel(intent.size)
+        center_index = intent.size // 2
+
+        absolute_law_ok = self._kernel_signature(self._law_reference(intent.size)) == self.ABSOLUTE_LAW
+        law_alignment = self._law_alignment(kernel)
+
+        parity = float(np.dot(intent, kernel))
+        expected_parity = float(np.dot(kernel, kernel))
+        structure_ok = abs(parity - expected_parity) <= self.tolerance
+
+        if intent.size % 2 == 1:
+            center_value = float(intent[center_index])
+            center_target = float(kernel[center_index])
+            center_ok = abs(center_value - center_target) <= self.tolerance
+        else:
+            center_value = 0.0
+            center_ok = True
+
+        temporal_entropy, accel_entropy = self._temporal_metrics(timestamps)
+        timing_ok = temporal_entropy >= self.laminar_threshold
+
+        symmetry = self._symmetry_score(intent)
+
+        law_factor = law_alignment if absolute_law_ok else 0.0
+
+        stability = (
+            0.28 * symmetry +
+            0.22 * float(structure_ok) +
+            0.18 * float(timing_ok) +
+            0.12 * float(center_ok) +
+            0.20 * law_factor
+        )
+        stability = float(max(0.0, min(1.0, stability)))
+
+        maturation_level = (
+            0.36 * symmetry +
+            0.22 * float(structure_ok) +
+            0.16 * float(timing_ok) +
+            0.10 * float(center_ok) +
+            0.16 * law_factor
+        )
+        maturation_level = float(max(0.0, min(1.0, maturation_level)))
+
+        return {
+            "structure_ok": structure_ok,
+            "timing_ok": timing_ok,
+            "parity": parity,
+            "center_value": center_value,
+            "temporal_entropy": temporal_entropy,
+            "accel_entropy": accel_entropy,
+            "symmetry_score": symmetry,
+            "stability_score": stability,
+            "maturation_level": maturation_level,
+            "absolute_law_ok": absolute_law_ok,
+            "law_alignment": law_alignment,
+        }
+
+    def process(self, intent: np.ndarray, timestamps: np.ndarray) -> EngineResult:
+        intent = self._as_float_array(intent)
+        state = self.evaluate_maturation(intent, timestamps)
+
+        if not state["absolute_law_ok"] or state["law_alignment"] < 0.5:
+            return {
+                "Status": "ABSOLUTE_LAW_VIOLATION",
+                "Phase_State": "BOUNDARY_ENFORCEMENT",
+                "Yield": np.zeros_like(intent),
+                "Coherence": 0.0,
+                "Maturation_Index": 0.0,
+                "Symmetry_Score": 0.0,
+                "Invariant_Check": f"{self.ABSOLUTE_LAW}-FAILED",
+            }
+
+        stability = state["stability_score"]
+        maturation = state["maturation_level"]
+        kernel = self._resize_kernel(intent.size)
+
+        if stability < 0.33:
+            phase = "UNSTABLE_DRIFT"
+            status = "NURTURING_REQUIRED"
+        elif stability < 0.66:
+            phase = "LAMINAR_MATURATION"
+            status = "MIGRATION_ACTIVE"
+        else:
+            phase = "STABLE_LOCKED"
+            status = "INVARIANT_CONFIRMED"
+
+        eps = np.finfo(float).eps
+
+        intent_component = intent * stability
+        kernel_component = kernel * maturation
+
+        intent_unit = intent_component / (np.linalg.norm(intent_component) + eps)
+        kernel_unit = kernel_component / (np.linalg.norm(kernel_component) + eps)
+
+        yield_vector = (intent_unit + kernel_unit) / 2.0
+
+        return {
+            "Status": status,
+            "Phase_State": phase,
+            "Yield": yield_vector,
+            "Coherence": stability,
+            "Maturation_Index": maturation,
+            "Symmetry_Score": state["symmetry_score"],
+            "Invariant_Check": f"{self.ABSOLUTE_LAW}-ACTIVE",
+        }
